@@ -1,8 +1,23 @@
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey)
-export const supabase = hasSupabaseConfig ? createClient(supabaseUrl, supabaseAnonKey) : null
-export const bucketName = 'product-images'
+:root{
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  color:#2b1b10;
+  background:#fff8ea;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at top,#fff3c9,#fff8ea 35%,#f7ead5);min-height:100vh}
+.app{max-width:1120px;margin:0 auto;padding:18px 14px 32px}
+.hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(135deg,#50351f,#7b4f28);color:#fff7e8;border-radius:28px;padding:24px;margin-bottom:18px;box-shadow:0 14px 40px rgba(70,42,16,.22)}
+.hero h1{margin:4px 0;font-size:38px;letter-spacing:-.04em}.hero p{margin:0;color:#f5dfba}.kicker{text-transform:uppercase;font-size:12px;letter-spacing:.18em}
+.admin-link,.primary,.order{border:0;border-radius:16px;padding:13px 18px;font-weight:800;cursor:pointer}.admin-link{background:#fff6df;color:#4b2d16}
+.grid{display:flex!important;flex-wrap:wrap!important;gap:18px!important;justify-content:center!important;align-items:flex-start!important;width:100%!important}
+.card,.cart,.panel{background:rgba(255,255,255,.88);border:1px solid rgba(103,67,30,.14);border-radius:24px;box-shadow:0 10px 30px rgba(79,52,26,.1);overflow:hidden}
+.card{width:min(100%,340px)!important;max-width:340px!important;flex:0 0 340px!important}
+.photo-wrap{position:relative;height:96px!important;background:#f6f0e6!important;display:flex!important;align-items:center!important;justify-content:center!important;overflow:hidden!important}
+.photo-wrap img{width:100%!important;height:100%!important;object-fit:contain!important;display:block!important}
+.badge{position:absolute;top:10px;left:10px;padding:7px 10px;border-radius:999px;font-size:12px;font-weight:900}.badge.ok{background:#e4ffd8;color:#226800}.badge.no{background:#ffe1d6;color:#9b1e00}
+.dots{display:flex;gap:6px;justify-content:center;padding:8px}.dot{width:8px;height:8px;border-radius:50%;border:0;background:#cbb68e}.dot.active{background:#6e431f}
+.card-body{padding:14px 16px 16px}.card h2{margin:0 0 8px;font-size:20px}.card p{color:#715d4b;margin:0 0 14px}.meta{display:flex;justify-content:space-between;gap:10px;font-weight:900;margin-bottom:14px}
+.primary{background:#6e431f;color:#fff;width:100%}.primary:disabled,.order:disabled{opacity:.5;cursor:not-allowed}.qty{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#f1e0c5;border-radius:16px;padding:6px}.qty button,.cart-row button,.admin-row button{border:0;border-radius:12px;background:#6e431f;color:#fff;padding:8px 12px;font-weight:900}
+.cart{position:static!important;transform:none!important;width:100%!important;padding:16px;margin-top:22px;z-index:1;clear:both}.cart h2{margin:0 0 8px}.cart-row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #edd9b5;padding:8px 0}.total{font-size:20px;font-weight:900;margin:10px 0}.order{background:#2d7a2d;color:#fff;width:100%;font-size:16px}
+.notice{background:#fff1bb;border:1px solid #e3b85d;color:#4c3100;padding:12px;border-radius:16px;margin-bottom:16px}.admin{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{padding:18px}.panel input,.panel textarea{width:100%;display:block;margin:10px 0;padding:14px;border-radius:14px;border:1px solid #d6c19f;background:#fffaf0;color:#2b1b10}.panel textarea{min-height:100px}.admin-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;border-top:1px solid #ead8ba}
+@media(max-width:720px){.app{padding:10px 8px 28px}.hero{border-radius:22px}.hero h1{font-size:30px}.grid{display:block!important}.card{width:100%!important;max-width:100%!important;flex:none!important;margin-bottom:16px}.photo-wrap{height:120px!important}.admin{grid-template-columns:1fr}.cart{max-height:none;overflow:visible}}
