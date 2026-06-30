@@ -75,7 +75,7 @@ function App() {
         <div>
           <p className="kicker">Telegram Mini App</p>
           <h1>Лавка Сенатора</h1>
-          <p>Фермерские продукты, домашние заготовки и свежие вкусности.</p>
+          <p>Ничего не спизжено.</p>
         </div>
         <button className="admin-link" onClick={() => setPage(page === 'shop' ? 'admin' : 'shop')}>
           {page === 'shop' ? 'Админка' : 'Магазин'}
