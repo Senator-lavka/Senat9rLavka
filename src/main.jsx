@@ -29,11 +29,19 @@ function getBuyerInfo() {
   const user = window.Telegram?.WebApp?.initDataUnsafe?.user
   if (!user) return { name: 'Покупатель из Telegram', username: '', telegram_id: '' }
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ')
+  const username = user.username ? '@' + user.username : ''
   return {
-    name: fullName || user.username || 'Покупатель из Telegram',
-    username: user.username ? '@' + user.username : '',
+    name: username || fullName || 'Покупатель из Telegram',
+    username,
     telegram_id: user.id ? String(user.id) : ''
   }
+}
+
+function buyerDisplayName(order) {
+  if (order.buyer_username) return order.buyer_username
+  if (order.buyer_name && order.buyer_name !== 'Покупатель из Telegram') return order.buyer_name
+  if (order.buyer_telegram_id) return `Telegram ID: ${order.buyer_telegram_id}`
+  return 'Покупатель из Telegram'
 }
 
 function statusLabel(status) {
@@ -681,7 +689,7 @@ function OrdersPanel({ orders, earnedTotal, setOrderStatus }) {
           <strong className="order-total">{money(order.total)}</strong>
         </div>
         <div className="buyer">
-          Покупатель: {order.buyer_name || 'неизвестно'} {order.buyer_username || ''}
+          Покупатель: {buyerDisplayName(order)}
           {order.buyer_telegram_id && <small>ID: {order.buyer_telegram_id}</small>}
         </div>
         {pending && <div className="reserve-timer">Бронь до {reserveTime}</div>}
