@@ -5,6 +5,7 @@ import './styles.css'
 
 const OWNER_USERNAME = import.meta.env.VITE_OWNER_USERNAME || 'Senat9r'
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || ''
+const RESERVE_MINUTES = 30
 
 function money(value) {
   return new Intl.NumberFormat('ru-RU').format(Number(value || 0)) + ' ₽'
@@ -24,12 +25,78 @@ function availableQty(product) {
   return Math.max(0, Number(product.stock || 0) - Number(product.reserved_qty || 0))
 }
 
+function getBuyerInfo() {
+  const user = window.Telegram?.WebApp?.initDataUnsafe?.user
+  if (!user) return { name: 'Покупатель из Telegram', username: '', telegram_id: '' }
+  const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ')
+  return {
+    name: fullName || user.username || 'Покупатель из Telegram',
+    username: user.username ? '@' + user.username : '',
+    telegram_id: user.id ? String(user.id) : ''
+  }
+}
+
+function statusLabel(status) {
+  const labels = {
+    pending: 'Ожидает подтверждения',
+    confirmed: 'Подтверждён',
+    completed: 'Выдан / оплачен',
+    cancelled: 'Отменён',
+    expired: 'Бронь истекла'
+  }
+  return labels[status] || status
+}
+
 function App() {
   const [products, setProducts] = useState([])
   const [suggestions, setSuggestions] = useState([])
+  const [orders, setOrders] = useState([])
   const [cart, setCart] = useState({})
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(location.pathname.includes('/admin') ? 'admin' : 'shop')
+
+  async function expireOldOrders() {
+    if (!hasSupabaseConfig) return
+    const nowIso = new Date().toISOString()
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('status', 'pending')
+      .lt('reserved_until', nowIso)
+
+    if (error) {
+      console.error(error)
+      return
+    }
+
+    for (const order of data || []) {
+      const { error: statusError } = await supabase
+        .from('orders')
+        .update({ status: 'expired' })
+        .eq('id', order.id)
+        .eq('status', 'pending')
+
+      if (statusError) {
+        console.error(statusError)
+        continue
+      }
+
+      for (const item of order.items || []) {
+        const product = products.find(p => p.id === item.product_id)
+        let reservedNow = Number(product?.reserved_qty || 0)
+
+        if (!product) {
+          const { data: fresh } = await supabase.from('products').select('reserved_qty').eq('id', item.product_id).single()
+          reservedNow = Number(fresh?.reserved_qty || 0)
+        }
+
+        await supabase
+          .from('products')
+          .update({ reserved_qty: Math.max(0, reservedNow - Number(item.qty || 0)) })
+          .eq('id', item.product_id)
+      }
+    }
+  }
 
   async function loadProducts() {
     setLoading(true)
@@ -57,9 +124,30 @@ function App() {
     setSuggestions(data || [])
   }
 
+  async function loadOrders() {
+    if (!hasSupabaseConfig) {
+      setOrders([])
+      return
+    }
+    const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false })
+    if (error) {
+      console.error(error)
+      return
+    }
+    setOrders(data || [])
+  }
+
+  async function refreshAll() {
+    await expireOldOrders()
+    await loadProducts()
+    await loadSuggestions()
+    await loadOrders()
+  }
+
   useEffect(() => {
-    loadProducts()
-    loadSuggestions()
+    refreshAll()
+    const interval = setInterval(refreshAll, 60 * 1000)
+    return () => clearInterval(interval)
   }, [])
 
   function addToCart(product) {
@@ -95,13 +183,31 @@ function App() {
   async function order() {
     if (!cartItems.length) return
     try {
+      const reservedUntil = new Date(Date.now() + RESERVE_MINUTES * 60 * 1000).toISOString()
+      const buyer = getBuyerInfo()
+      const orderItems = cartItems.map(item => ({
+        product_id: item.id,
+        name: item.name,
+        qty: Number(item.qty),
+        price: Number(item.price),
+        sum: Number(item.price) * Number(item.qty)
+      }))
+
       for (const item of cartItems) {
-        const fresh = products.find(p => p.id === item.id)
+        const { data: freshProduct, error: freshError } = await supabase
+          .from('products')
+          .select('*')
+          .eq('id', item.id)
+          .single()
+
+        if (freshError) throw freshError
+        const fresh = normalizeProduct(freshProduct)
         if (!fresh || item.qty > availableQty(fresh)) {
           alert(`Товар «${item.name}» уже недоступен в таком количестве`)
-          await loadProducts()
+          await refreshAll()
           return
         }
+
         const { error } = await supabase
           .from('products')
           .update({ reserved_qty: Number(fresh.reserved_qty || 0) + Number(item.qty || 0) })
@@ -109,13 +215,26 @@ function App() {
         if (error) throw error
       }
 
+      const { error: orderError } = await supabase.from('orders').insert({
+        items: orderItems,
+        total,
+        status: 'pending',
+        reserved_until: reservedUntil,
+        buyer_name: buyer.name,
+        buyer_username: buyer.username,
+        buyer_telegram_id: buyer.telegram_id
+      })
+      if (orderError) throw orderError
+
       const list = cartItems.map(item => `• ${item.name} — ${item.qty} шт. × ${item.price} ₽ = ${item.qty * item.price} ₽`).join('\n')
-      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽`
+      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽\n\nТовар забронирован на ${RESERVE_MINUTES} минут.`
       setCart({})
-      await loadProducts()
+      await refreshAll()
+      alert(`Заказ создан. Бронь действует ${RESERVE_MINUTES} минут. Теперь отправь сообщение продавцу.`)
       window.open(`https://t.me/${OWNER_USERNAME}?text=${encodeURIComponent(text)}`, '_blank')
     } catch (err) {
       alert('Ошибка брони: ' + err.message)
+      await refreshAll()
     }
   }
 
@@ -150,11 +269,9 @@ function App() {
       {!hasSupabaseConfig && <div className="notice">Не подключён Supabase. Добавь переменные окружения в Vercel.</div>}
 
       {page === 'shop' ? (
-        <>
-          <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
-        </>
+        <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
       ) : (
-        <Admin products={products} reload={loadProducts} suggestions={suggestions} reloadSuggestions={loadSuggestions} newSuggestionsCount={newSuggestionsCount} />
+        <Admin products={products} reload={refreshAll} suggestions={suggestions} reloadSuggestions={loadSuggestions} newSuggestionsCount={newSuggestionsCount} orders={orders} reloadOrders={refreshAll} />
       )}
     </div>
   )
@@ -258,11 +375,12 @@ function Cart({ cartItems, total, changeQty, order }) {
       ))}
       <div className="total">Итого: {money(total)}</div>
       <button className="order" disabled={!cartItems.length} onClick={order}>Оформить заказ</button>
+      <p className="cart-note">После оформления товары бронируются на 30 минут.</p>
     </aside>
   )
 }
 
-function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestionsCount }) {
+function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestionsCount, orders, reloadOrders }) {
   const [authed, setAuthed] = useState(sessionStorage.getItem('lavka_admin') === '1')
   const [password, setPassword] = useState('')
   const [form, setForm] = useState({ name: '', description: '', price: '', stock: '' })
@@ -274,6 +392,8 @@ function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestion
   const [editImageUrls, setEditImageUrls] = useState([])
   const [adminTab, setAdminTab] = useState('products')
   const editingProduct = products.find(p => p.id === editingId)
+  const pendingOrdersCount = orders.filter(o => o.status === 'pending').length
+  const earnedTotal = orders.filter(o => o.status === 'completed').reduce((sum, order) => sum + Number(order.total || 0), 0)
 
   function login(e) {
     e.preventDefault()
@@ -386,12 +506,45 @@ function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestion
     await reloadSuggestions()
   }
 
+  async function releaseOrderReserve(order) {
+    for (const item of order.items || []) {
+      const product = products.find(p => p.id === item.product_id)
+      let reservedNow = Number(product?.reserved_qty || 0)
+      if (!product) {
+        const { data: fresh } = await supabase.from('products').select('reserved_qty').eq('id', item.product_id).single()
+        reservedNow = Number(fresh?.reserved_qty || 0)
+      }
+      await supabase
+        .from('products')
+        .update({ reserved_qty: Math.max(0, reservedNow - Number(item.qty || 0)) })
+        .eq('id', item.product_id)
+    }
+  }
+
+  async function setOrderStatus(order, status) {
+    if (status === 'completed' && !confirm('Отметить заказ как выданный/оплаченный? Эта сумма попадёт в заработок.')) return
+    if (status === 'cancelled' && !confirm('Отменить заказ и снять бронь?')) return
+
+    const { error } = await supabase.from('orders').update({ status }).eq('id', order.id)
+    if (error) {
+      alert(error.message)
+      return
+    }
+
+    if (status === 'cancelled' || status === 'completed') {
+      await releaseOrderReserve(order)
+    }
+
+    await reloadOrders()
+  }
+
   if (!authed) return <form className="admin panel" onSubmit={login}><h2>Вход в админку</h2><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" /><button className="primary">Войти</button></form>
 
   return (
     <section className="admin">
       <div className="admin-tabs">
         <button className={adminTab === 'products' ? 'tab active' : 'tab'} onClick={() => setAdminTab('products')}>Товары</button>
+        <button className={adminTab === 'orders' ? 'tab active' : 'tab'} onClick={() => setAdminTab('orders')}>Заказы <span className="tab-count">{pendingOrdersCount}</span></button>
         <button className={adminTab === 'suggestions' ? 'tab active' : 'tab'} onClick={() => setAdminTab('suggestions')}>Предложения <span className="tab-count">{newSuggestionsCount}</span></button>
       </div>
 
@@ -440,6 +593,8 @@ function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestion
         </form>}
       </>}
 
+      {adminTab === 'orders' && <OrdersPanel orders={orders} earnedTotal={earnedTotal} setOrderStatus={setOrderStatus} />}
+
       {adminTab === 'suggestions' && <div className="panel suggestions-panel">
         <h2>Предложения товаров <span className="title-count">{newSuggestionsCount}</span></h2>
         {!suggestions.length && <p>Пока предложений нет.</p>}
@@ -458,6 +613,44 @@ function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestion
       </div>}
     </section>
   )
+}
+
+function OrdersPanel({ orders, earnedTotal, setOrderStatus }) {
+  return <div className="panel orders-panel">
+    <div className="stats-card">
+      <span>Всего заработано</span>
+      <strong>{money(earnedTotal)}</strong>
+      <small>Считаются заказы со статусом «Выдан / оплачен».</small>
+    </div>
+    <h2>Заказы</h2>
+    {!orders.length && <p>Пока заказов нет.</p>}
+    {orders.map(order => {
+      const pending = order.status === 'pending'
+      const reserveTime = order.reserved_until ? new Date(order.reserved_until).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : ''
+      return <div className={`order-card status-${order.status}`} key={order.id}>
+        <div className="order-head">
+          <div>
+            <strong>{statusLabel(order.status)}</strong>
+            <small>{new Date(order.created_at).toLocaleString('ru-RU')}</small>
+          </div>
+          <strong className="order-total">{money(order.total)}</strong>
+        </div>
+        <div className="buyer">
+          Покупатель: {order.buyer_name || 'неизвестно'} {order.buyer_username || ''}
+          {order.buyer_telegram_id && <small>ID: {order.buyer_telegram_id}</small>}
+        </div>
+        {pending && <div className="reserve-timer">Бронь до {reserveTime}</div>}
+        <ul className="order-items">
+          {(order.items || []).map((item, index) => <li key={index}>{item.name} — {item.qty} шт. × {item.price} ₽ = {item.sum} ₽</li>)}
+        </ul>
+        <div className="admin-actions order-actions">
+          {order.status === 'pending' && <button onClick={() => setOrderStatus(order, 'confirmed')}>Подтвердить</button>}
+          {(order.status === 'pending' || order.status === 'confirmed') && <button onClick={() => setOrderStatus(order, 'completed')}>Выдан / оплачен</button>}
+          {(order.status === 'pending' || order.status === 'confirmed') && <button onClick={() => setOrderStatus(order, 'cancelled')}>Отменить</button>}
+        </div>
+      </div>
+    })}
+  </div>
 }
 
 createRoot(document.getElementById('root')).render(<App />)
