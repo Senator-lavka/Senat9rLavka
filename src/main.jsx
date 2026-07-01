@@ -5,7 +5,7 @@ import './styles.css'
 
 const OWNER_USERNAME = import.meta.env.VITE_OWNER_USERNAME || 'Senat9r'
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || ''
-const RESERVE_MINUTES = 30
+const RESERVE_MINUTES = 60
 
 function money(value) {
   return new Intl.NumberFormat('ru-RU').format(Number(value || 0)) + ' ₽'
@@ -54,6 +54,7 @@ function App() {
   const [cart, setCart] = useState({})
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(location.pathname.includes('/admin') ? 'admin' : 'shop')
+  const [orderNotice, setOrderNotice] = useState(null)
 
   async function expireOldOrders() {
     if (!hasSupabaseConfig) return
@@ -227,11 +228,22 @@ function App() {
       if (orderError) throw orderError
 
       const list = cartItems.map(item => `• ${item.name} — ${item.qty} шт. × ${item.price} ₽ = ${item.qty * item.price} ₽`).join('\n')
-      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽\n\nТовар забронирован на ${RESERVE_MINUTES} минут.`
+      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽\n\nЗаказ ожидает подтверждения Сенатора. Бронь действует ${RESERVE_MINUTES} минут.`
+      const buyerMessage = `✅ Заказ создан и ожидает подтверждения Сенатора.\n\n${list}\n\nИтого: ${total} ₽\n\nБронь действует ${RESERVE_MINUTES} минут. Пожалуйста, напишите продавцу в личные сообщения: @${OWNER_USERNAME}`
       setCart({})
       await refreshAll()
-      alert(`Заказ создан. Бронь действует ${RESERVE_MINUTES} минут. Теперь отправь сообщение продавцу.`)
-      window.open(`https://t.me/${OWNER_USERNAME}?text=${encodeURIComponent(text)}`, '_blank')
+      setOrderNotice({ text, buyerMessage, reservedUntil })
+      if (buyer.telegram_id) {
+        fetch('/api/notify-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId: buyer.telegram_id, text: buyerMessage })
+        }).catch(() => {})
+      }
+      const tg = window.Telegram?.WebApp
+      const link = `https://t.me/${OWNER_USERNAME}`
+      if (tg?.openTelegramLink) tg.openTelegramLink(link)
+      else window.open(link, '_blank')
     } catch (err) {
       alert('Ошибка брони: ' + err.message)
       await refreshAll()
@@ -269,7 +281,7 @@ function App() {
       {!hasSupabaseConfig && <div className="notice">Не подключён Supabase. Добавь переменные окружения в Vercel.</div>}
 
       {page === 'shop' ? (
-        <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
+        <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} orderNotice={orderNotice} setOrderNotice={setOrderNotice} />
       ) : (
         <Admin products={products} reload={refreshAll} suggestions={suggestions} reloadSuggestions={loadSuggestions} newSuggestionsCount={newSuggestionsCount} orders={orders} reloadOrders={refreshAll} />
       )}
@@ -277,7 +289,7 @@ function App() {
   )
 }
 
-function Shop({ products, loading, cart, addToCart, changeQty, cartItems, total, order }) {
+function Shop({ products, loading, cart, addToCart, changeQty, cartItems, total, order, orderNotice, setOrderNotice }) {
   return (
     <>
       <main className="grid">
@@ -288,6 +300,7 @@ function Shop({ products, loading, cart, addToCart, changeQty, cartItems, total,
         ))}
       </main>
       <Cart cartItems={cartItems} total={total} changeQty={changeQty} order={order} />
+      {orderNotice && <OrderNotice notice={orderNotice} onClose={() => setOrderNotice(null)} />}
     </>
   )
 }
@@ -335,6 +348,38 @@ function SuggestionWidget({ onSubmit }) {
   )
 }
 
+
+function OrderNotice({ notice, onClose }) {
+  async function copyText() {
+    try {
+      await navigator.clipboard.writeText(notice.text)
+      alert('Текст заказа скопирован')
+    } catch {
+      alert('Не получилось скопировать автоматически. Скопируйте текст вручную.')
+    }
+  }
+
+  function openSeller() {
+    const link = `https://t.me/${OWNER_USERNAME}`
+    const tg = window.Telegram?.WebApp
+    if (tg?.openTelegramLink) tg.openTelegramLink(link)
+    else window.open(link, '_blank')
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="suggestion-modal order-notice-modal" onClick={e => e.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onClose}>×</button>
+        <h2>Заказ ожидает подтверждения Сенатора</h2>
+        <p className="warning">Бронь действует 1 час. Чтобы Сенатор быстрее подтвердил заказ, напишите ему в личные сообщения.</p>
+        <pre className="order-text-preview">{notice.text}</pre>
+        <button className="primary" onClick={openSeller}>Написать @Senat9r</button>
+        <button className="secondary" onClick={copyText}>Скопировать текст заказа</button>
+      </div>
+    </div>
+  )
+}
+
 function ProductCard({ product, qty, addToCart, changeQty }) {
   const images = product.image_urls?.length ? product.image_urls : product.image_url ? [product.image_url] : []
   const [photo, setPhoto] = useState(0)
@@ -375,7 +420,7 @@ function Cart({ cartItems, total, changeQty, order }) {
       ))}
       <div className="total">Итого: {money(total)}</div>
       <button className="order" disabled={!cartItems.length} onClick={order}>Оформить заказ</button>
-      <p className="cart-note">После оформления товары бронируются на 30 минут.</p>
+      <p className="cart-note">После оформления товары бронируются на 1 час и ожидают подтверждения Сенатора.</p>
     </aside>
   )
 }
