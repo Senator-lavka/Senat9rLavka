@@ -139,16 +139,18 @@ function App() {
           <h1>Лавка Сенатора</h1>
           <p>Самые дешевые цены в галактике!</p>
         </div>
-        <button className="admin-link" onClick={() => setPage(page === 'shop' ? 'admin' : 'shop')}>
-          {page === 'shop' ? 'Админка' : 'Магазин'}
-        </button>
+        <div className="hero-actions">
+          {page === 'shop' && <SuggestionWidget onSubmit={submitSuggestion} />}
+          <button className="admin-link" onClick={() => setPage(page === 'shop' ? 'admin' : 'shop')}>
+            {page === 'shop' ? 'Админка' : 'Магазин'}
+          </button>
+        </div>
       </header>
 
       {!hasSupabaseConfig && <div className="notice">Не подключён Supabase. Добавь переменные окружения в Vercel.</div>}
 
       {page === 'shop' ? (
         <>
-          <SuggestionWidget onSubmit={submitSuggestion} />
           <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
         </>
       ) : (
