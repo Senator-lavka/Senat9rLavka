@@ -26,6 +26,7 @@ function availableQty(product) {
 
 function App() {
   const [products, setProducts] = useState([])
+  const [suggestions, setSuggestions] = useState([])
   const [cart, setCart] = useState({})
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(location.pathname.includes('/admin') ? 'admin' : 'shop')
@@ -43,7 +44,23 @@ function App() {
     setLoading(false)
   }
 
-  useEffect(() => { loadProducts() }, [])
+  async function loadSuggestions() {
+    if (!hasSupabaseConfig) {
+      setSuggestions([])
+      return
+    }
+    const { data, error } = await supabase.from('product_suggestions').select('*').order('created_at', { ascending: false })
+    if (error) {
+      console.error(error)
+      return
+    }
+    setSuggestions(data || [])
+  }
+
+  useEffect(() => {
+    loadProducts()
+    loadSuggestions()
+  }, [])
 
   function addToCart(product) {
     const available = availableQty(product)
@@ -77,7 +94,6 @@ function App() {
 
   async function order() {
     if (!cartItems.length) return
-
     try {
       for (const item of cartItems) {
         const fresh = products.find(p => p.id === item.id)
@@ -103,6 +119,18 @@ function App() {
     }
   }
 
+  async function submitSuggestion(payload) {
+    if (!hasSupabaseConfig) {
+      alert('Supabase не подключён')
+      return
+    }
+    const { error } = await supabase.from('product_suggestions').insert(payload)
+    if (error) throw error
+    await loadSuggestions()
+  }
+
+  const newSuggestionsCount = suggestions.filter(s => s.is_new).length
+
   return (
     <div className="app">
       <header className="hero">
@@ -119,9 +147,12 @@ function App() {
       {!hasSupabaseConfig && <div className="notice">Не подключён Supabase. Добавь переменные окружения в Vercel.</div>}
 
       {page === 'shop' ? (
-        <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
+        <>
+          <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
+          <SuggestionWidget onSubmit={submitSuggestion} />
+        </>
       ) : (
-        <Admin products={products} reload={loadProducts} />
+        <Admin products={products} reload={loadProducts} suggestions={suggestions} reloadSuggestions={loadSuggestions} newSuggestionsCount={newSuggestionsCount} />
       )}
     </div>
   )
@@ -138,6 +169,49 @@ function Shop({ products, loading, cart, addToCart, changeQty, cartItems, total,
         ))}
       </main>
       <Cart cartItems={cartItems} total={total} changeQty={changeQty} order={order} />
+    </>
+  )
+}
+
+function SuggestionWidget({ onSubmit }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [comment, setComment] = useState('')
+  const [contact, setContact] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!name.trim()) return
+    setBusy(true)
+    try {
+      await onSubmit({ name: name.trim(), comment: comment.trim(), contact: contact.trim(), is_new: true })
+      setName('')
+      setComment('')
+      setContact('')
+      setOpen(false)
+      alert('Предложение отправлено. Ваше предложение не гарантирует наличие товара в будущем.')
+    } catch (err) {
+      alert('Ошибка: ' + err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button className="suggestion-button" onClick={() => setOpen(true)}>Предложить товар</button>
+      {open && <div className="modal-backdrop" onClick={() => setOpen(false)}>
+        <form className="suggestion-modal" onSubmit={submit} onClick={e => e.stopPropagation()}>
+          <button type="button" className="modal-close" onClick={() => setOpen(false)}>×</button>
+          <h2>Предложить товар</h2>
+          <p className="warning">Ваше предложение не гарантирует наличие товара в будущем.</p>
+          <input required placeholder="Что добавить? Например: сыр, варенье, малина" value={name} onChange={e => setName(e.target.value)} />
+          <textarea placeholder="Комментарий: вес, бренд, вкус, примерная цена" value={comment} onChange={e => setComment(e.target.value)} />
+          <input placeholder="Контакт для уточнения, если нужно" value={contact} onChange={e => setContact(e.target.value)} />
+          <button className="primary" disabled={busy}>{busy ? 'Отправляю...' : 'Отправить предложение'}</button>
+        </form>
+      </div>}
     </>
   )
 }
@@ -186,7 +260,7 @@ function Cart({ cartItems, total, changeQty, order }) {
   )
 }
 
-function Admin({ products, reload }) {
+function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestionsCount }) {
   const [authed, setAuthed] = useState(sessionStorage.getItem('lavka_admin') === '1')
   const [password, setPassword] = useState('')
   const [form, setForm] = useState({ name: '', description: '', price: '', stock: '' })
@@ -196,6 +270,7 @@ function Admin({ products, reload }) {
   const [editForm, setEditForm] = useState({ name: '', description: '', price: '', stock: '' })
   const [editFiles, setEditFiles] = useState([])
   const [editImageUrls, setEditImageUrls] = useState([])
+  const [adminTab, setAdminTab] = useState('products')
   const editingProduct = products.find(p => p.id === editingId)
 
   function login(e) {
@@ -296,52 +371,89 @@ function Admin({ products, reload }) {
     await reload()
   }
 
+  async function markSuggestionRead(id) {
+    const { error } = await supabase.from('product_suggestions').update({ is_new: false }).eq('id', id)
+    if (error) alert(error.message)
+    await reloadSuggestions()
+  }
+
+  async function deleteSuggestion(id) {
+    if (!confirm('Удалить предложение?')) return
+    const { error } = await supabase.from('product_suggestions').delete().eq('id', id)
+    if (error) alert(error.message)
+    await reloadSuggestions()
+  }
+
   if (!authed) return <form className="admin panel" onSubmit={login}><h2>Вход в админку</h2><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль" /><button className="primary">Войти</button></form>
 
   return (
     <section className="admin">
-      <form className="panel" onSubmit={addProduct}>
-        <h2>Добавить товар</h2>
-        <input required placeholder="Название, например: Сыр Гауда 300 г" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-        <textarea placeholder="Описание" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
-        <input required type="number" placeholder="Цена" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} />
-        <input required type="number" placeholder="Остаток" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
-        <input type="file" multiple accept="image/*" onChange={e => setFiles([...e.target.files])} />
-        <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Добавить'}</button>
-      </form>
-
-      <div className="panel">
-        <h2>Товары</h2>
-        {products.map(p => {
-          const available = availableQty(p)
-          const booked = p.stock > 0 && available <= 0 && Number(p.reserved_qty || 0) > 0
-          return <div className="admin-row" key={p.id}>
-            <div>
-              <strong>{p.name}</strong><br />
-              <small>{money(p.price)} · всего {p.stock} · бронь {p.reserved_qty || 0} · доступно {available}</small>
-              {booked && <div className="admin-booked">Забронировано</div>}
-            </div>
-            <div className="admin-actions">
-              <button onClick={() => startEdit(p)}>Редактировать</button>
-              <button onClick={() => clearReserve(p.id)}>Убрать бронь</button>
-              <button onClick={() => removeProduct(p.id)}>Удалить</button>
-            </div>
-          </div>
-        })}
+      <div className="admin-tabs">
+        <button className={adminTab === 'products' ? 'tab active' : 'tab'} onClick={() => setAdminTab('products')}>Товары</button>
+        <button className={adminTab === 'suggestions' ? 'tab active' : 'tab'} onClick={() => setAdminTab('suggestions')}>Предложения <span className="tab-count">{newSuggestionsCount}</span></button>
       </div>
 
-      {editingProduct && <form className="panel edit-panel" onSubmit={saveEdit}>
-        <h2>Редактировать товар</h2>
-        <input required placeholder="Название" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
-        <textarea placeholder="Описание" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
-        <input required type="number" placeholder="Цена" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} />
-        <input required type="number" placeholder="Остаток" value={editForm.stock} onChange={e => setEditForm({ ...editForm, stock: e.target.value })} />
-        <label className="field-label">Добавить новые фото</label>
-        <input type="file" multiple accept="image/*" onChange={e => setEditFiles([...e.target.files])} />
-        {!!editImageUrls?.length && <div className="thumbs">{editImageUrls.map((url, index) => <div className="thumb" key={url + index}><img src={url} alt="Фото товара" /><button type="button" onClick={() => removeEditPhoto(index)}>×</button></div>)}</div>}
-        <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Сохранить изменения'}</button>
-        <button type="button" className="secondary" onClick={() => setEditingId(null)}>Отмена</button>
-      </form>}
+      {adminTab === 'products' && <>
+        <form className="panel" onSubmit={addProduct}>
+          <h2>Добавить товар</h2>
+          <input required placeholder="Название, например: Сыр Гауда 300 г" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          <textarea placeholder="Описание" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
+          <input required type="number" placeholder="Цена" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} />
+          <input required type="number" placeholder="Остаток" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
+          <input type="file" multiple accept="image/*" onChange={e => setFiles([...e.target.files])} />
+          <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Добавить'}</button>
+        </form>
+
+        <div className="panel">
+          <h2>Товары</h2>
+          {products.map(p => {
+            const available = availableQty(p)
+            const booked = p.stock > 0 && available <= 0 && Number(p.reserved_qty || 0) > 0
+            return <div className="admin-row" key={p.id}>
+              <div>
+                <strong>{p.name}</strong><br />
+                <small>{money(p.price)} · всего {p.stock} · бронь {p.reserved_qty || 0} · доступно {available}</small>
+                {booked && <div className="admin-booked">Забронировано</div>}
+              </div>
+              <div className="admin-actions">
+                <button onClick={() => startEdit(p)}>Редактировать</button>
+                <button onClick={() => clearReserve(p.id)}>Убрать бронь</button>
+                <button onClick={() => removeProduct(p.id)}>Удалить</button>
+              </div>
+            </div>
+          })}
+        </div>
+
+        {editingProduct && <form className="panel edit-panel" onSubmit={saveEdit}>
+          <h2>Редактировать товар</h2>
+          <input required placeholder="Название" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+          <textarea placeholder="Описание" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
+          <input required type="number" placeholder="Цена" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} />
+          <input required type="number" placeholder="Остаток" value={editForm.stock} onChange={e => setEditForm({ ...editForm, stock: e.target.value })} />
+          <label className="field-label">Добавить новые фото</label>
+          <input type="file" multiple accept="image/*" onChange={e => setEditFiles([...e.target.files])} />
+          {!!editImageUrls?.length && <div className="thumbs">{editImageUrls.map((url, index) => <div className="thumb" key={url + index}><img src={url} alt="Фото товара" /><button type="button" onClick={() => removeEditPhoto(index)}>×</button></div>)}</div>}
+          <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Сохранить изменения'}</button>
+          <button type="button" className="secondary" onClick={() => setEditingId(null)}>Отмена</button>
+        </form>}
+      </>}
+
+      {adminTab === 'suggestions' && <div className="panel suggestions-panel">
+        <h2>Предложения товаров <span className="title-count">{newSuggestionsCount}</span></h2>
+        {!suggestions.length && <p>Пока предложений нет.</p>}
+        {suggestions.map(item => <div className={item.is_new ? 'suggestion-row new' : 'suggestion-row'} key={item.id}>
+          <div>
+            <strong>{item.name}</strong> {item.is_new && <span className="new-badge">новое</span>}
+            {item.comment && <p>{item.comment}</p>}
+            {item.contact && <small>Контакт: {item.contact}</small>}
+            <small>{new Date(item.created_at).toLocaleString('ru-RU')}</small>
+          </div>
+          <div className="admin-actions">
+            {item.is_new && <button onClick={() => markSuggestionRead(item.id)}>Прочитано</button>}
+            <button onClick={() => deleteSuggestion(item.id)}>Удалить</button>
+          </div>
+        </div>)}
+      </div>}
     </section>
   )
 }
