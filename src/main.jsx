@@ -10,6 +10,20 @@ function money(value) {
   return new Intl.NumberFormat('ru-RU').format(Number(value || 0)) + ' ₽'
 }
 
+function normalizeProduct(product) {
+  return {
+    ...product,
+    reserved_qty: Number(product.reserved_qty || 0),
+    stock: Number(product.stock || 0),
+    price: Number(product.price || 0),
+    image_urls: product.image_urls || []
+  }
+}
+
+function availableQty(product) {
+  return Math.max(0, Number(product.stock || 0) - Number(product.reserved_qty || 0))
+}
+
 function App() {
   const [products, setProducts] = useState([])
   const [cart, setCart] = useState({})
@@ -25,19 +39,18 @@ function App() {
     }
     const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false })
     if (error) console.error(error)
-    setProducts(data || [])
+    setProducts((data || []).map(normalizeProduct))
     setLoading(false)
   }
 
-  useEffect(() => {
-    loadProducts()
-  }, [])
+  useEffect(() => { loadProducts() }, [])
 
   function addToCart(product) {
-    if (product.stock <= 0) return
+    const available = availableQty(product)
+    if (available <= 0) return
     setCart(prev => {
       const current = prev[product.id] || 0
-      if (current >= product.stock) return prev
+      if (current >= available) return prev
       return { ...prev, [product.id]: current + 1 }
     })
   }
@@ -46,7 +59,7 @@ function App() {
     const product = products.find(p => p.id === productId)
     setCart(prev => {
       const next = Math.max(0, (prev[productId] || 0) + delta)
-      if (product && next > product.stock) return prev
+      if (product && next > availableQty(product)) return prev
       const updated = { ...prev, [productId]: next }
       if (next === 0) delete updated[productId]
       return updated
@@ -62,11 +75,32 @@ function App() {
 
   const total = cartItems.reduce((sum, item) => sum + item.price * item.qty, 0)
 
-  function order() {
+  async function order() {
     if (!cartItems.length) return
-    const list = cartItems.map(item => `• ${item.name} — ${item.qty} шт. × ${item.price} ₽ = ${item.qty * item.price} ₽`).join('\n')
-    const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽`
-    window.open(`https://t.me/${OWNER_USERNAME}?text=${encodeURIComponent(text)}`, '_blank')
+
+    try {
+      for (const item of cartItems) {
+        const fresh = products.find(p => p.id === item.id)
+        if (!fresh || item.qty > availableQty(fresh)) {
+          alert(`Товар «${item.name}» уже недоступен в таком количестве`)
+          await loadProducts()
+          return
+        }
+        const { error } = await supabase
+          .from('products')
+          .update({ reserved_qty: Number(fresh.reserved_qty || 0) + Number(item.qty || 0) })
+          .eq('id', item.id)
+        if (error) throw error
+      }
+
+      const list = cartItems.map(item => `• ${item.name} — ${item.qty} шт. × ${item.price} ₽ = ${item.qty * item.price} ₽`).join('\n')
+      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽`
+      setCart({})
+      await loadProducts()
+      window.open(`https://t.me/${OWNER_USERNAME}?text=${encodeURIComponent(text)}`, '_blank')
+    } catch (err) {
+      alert('Ошибка брони: ' + err.message)
+    }
   }
 
   return (
@@ -111,23 +145,25 @@ function Shop({ products, loading, cart, addToCart, changeQty, cartItems, total,
 function ProductCard({ product, qty, addToCart, changeQty }) {
   const images = product.image_urls?.length ? product.image_urls : product.image_url ? [product.image_url] : []
   const [photo, setPhoto] = useState(0)
-  const available = product.stock > 0
+  const available = availableQty(product)
+  const booked = product.stock > 0 && available <= 0 && Number(product.reserved_qty || 0) > 0
   const currentImage = images[photo] || 'https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1200&auto=format&fit=crop'
+
   return (
     <article className="card">
       <div className="photo-wrap">
         <img src={currentImage} alt={product.name} />
-        <span className={available ? 'badge ok' : 'badge no'}>{available ? 'В наличии' : 'Нет в наличии'}</span>
+        <span className={booked ? 'badge booked' : available > 0 ? 'badge ok' : 'badge no'}>{booked ? 'Забронировано' : available > 0 ? 'В наличии' : 'Нет в наличии'}</span>
       </div>
       {images.length > 1 && <div className="dots">{images.map((_, i) => <button key={i} className={i === photo ? 'dot active' : 'dot'} onClick={() => setPhoto(i)} />)}</div>}
       <div className="card-body">
         <h2>{product.name}</h2>
         {product.description && <p>{product.description}</p>}
-        <div className="meta"><span>{money(product.price)}</span><span>Остаток: {product.stock}</span></div>
+        <div className="meta"><span>{money(product.price)}</span><span>{booked ? 'Бронь' : `Остаток: ${available}`}</span></div>
         {qty ? (
           <div className="qty"><button onClick={() => changeQty(product.id, -1)}>-</button><strong>{qty}</strong><button onClick={() => changeQty(product.id, 1)}>+</button></div>
         ) : (
-          <button className="primary" disabled={!available} onClick={() => addToCart(product)}>{available ? 'В корзину' : 'Закончилось'}</button>
+          <button className="primary" disabled={available <= 0} onClick={() => addToCart(product)}>{booked ? 'Забронировано' : available > 0 ? 'В корзину' : 'Закончилось'}</button>
         )}
       </div>
     </article>
@@ -156,6 +192,10 @@ function Admin({ products, reload }) {
   const [form, setForm] = useState({ name: '', description: '', price: '', stock: '' })
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', description: '', price: '', stock: '' })
+  const [editFiles, setEditFiles] = useState([])
+  const editingProduct = products.find(p => p.id === editingId)
 
   function login(e) {
     e.preventDefault()
@@ -188,6 +228,7 @@ function Admin({ products, reload }) {
         description: form.description,
         price: Number(form.price),
         stock: Number(form.stock),
+        reserved_qty: 0,
         image_urls
       })
       if (error) throw error
@@ -200,9 +241,50 @@ function Admin({ products, reload }) {
     } finally { setBusy(false) }
   }
 
+  function startEdit(product) {
+    setEditingId(product.id)
+    setEditForm({
+      name: product.name || '',
+      description: product.description || '',
+      price: String(product.price || ''),
+      stock: String(product.stock || '')
+    })
+    setEditFiles([])
+  }
+
+  async function saveEdit(e) {
+    e.preventDefault()
+    if (!editingProduct) return
+    setBusy(true)
+    try {
+      const newUrls = await uploadImages(editFiles)
+      const image_urls = [...(editingProduct.image_urls || []), ...newUrls]
+      const { error } = await supabase.from('products').update({
+        name: editForm.name,
+        description: editForm.description,
+        price: Number(editForm.price),
+        stock: Number(editForm.stock),
+        image_urls
+      }).eq('id', editingProduct.id)
+      if (error) throw error
+      setEditingId(null)
+      setEditFiles([])
+      await reload()
+      alert('Товар изменён')
+    } catch (err) {
+      alert('Ошибка: ' + err.message)
+    } finally { setBusy(false) }
+  }
+
   async function removeProduct(id) {
     if (!confirm('Удалить товар?')) return
     const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) alert(error.message)
+    await reload()
+  }
+
+  async function clearReserve(id) {
+    const { error } = await supabase.from('products').update({ reserved_qty: 0 }).eq('id', id)
     if (error) alert(error.message)
     await reload()
   }
@@ -220,10 +302,39 @@ function Admin({ products, reload }) {
         <input type="file" multiple accept="image/*" onChange={e => setFiles([...e.target.files])} />
         <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Добавить'}</button>
       </form>
+
       <div className="panel">
         <h2>Товары</h2>
-        {products.map(p => <div className="admin-row" key={p.id}><span>{p.name} — {money(p.price)} — остаток {p.stock}</span><button onClick={() => removeProduct(p.id)}>Удалить</button></div>)}
+        {products.map(p => {
+          const available = availableQty(p)
+          const booked = p.stock > 0 && available <= 0 && Number(p.reserved_qty || 0) > 0
+          return <div className="admin-row" key={p.id}>
+            <div>
+              <strong>{p.name}</strong><br />
+              <small>{money(p.price)} · всего {p.stock} · бронь {p.reserved_qty || 0} · доступно {available}</small>
+              {booked && <div className="admin-booked">Забронировано</div>}
+            </div>
+            <div className="admin-actions">
+              <button onClick={() => startEdit(p)}>Редактировать</button>
+              <button onClick={() => clearReserve(p.id)}>Убрать бронь</button>
+              <button onClick={() => removeProduct(p.id)}>Удалить</button>
+            </div>
+          </div>
+        })}
       </div>
+
+      {editingProduct && <form className="panel edit-panel" onSubmit={saveEdit}>
+        <h2>Редактировать товар</h2>
+        <input required placeholder="Название" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+        <textarea placeholder="Описание" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
+        <input required type="number" placeholder="Цена" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} />
+        <input required type="number" placeholder="Остаток" value={editForm.stock} onChange={e => setEditForm({ ...editForm, stock: e.target.value })} />
+        <label className="field-label">Добавить новые фото</label>
+        <input type="file" multiple accept="image/*" onChange={e => setEditFiles([...e.target.files])} />
+        {!!editingProduct.image_urls?.length && <div className="thumbs">{editingProduct.image_urls.map((url, index) => <img key={url + index} src={url} alt="Фото товара" />)}</div>}
+        <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Сохранить изменения'}</button>
+        <button type="button" className="secondary" onClick={() => setEditingId(null)}>Отмена</button>
+      </form>}
     </section>
   )
 }
