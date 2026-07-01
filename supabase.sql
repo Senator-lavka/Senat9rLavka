@@ -55,3 +55,35 @@ create policy "Public read product suggestions" on product_suggestions for selec
 create policy "Public insert product suggestions" on product_suggestions for insert to anon with check (true);
 create policy "Public update product suggestions" on product_suggestions for update to anon using (true) with check (true);
 create policy "Public delete product suggestions" on product_suggestions for delete to anon using (true);
+
+create table if not exists orders (
+  id uuid primary key default gen_random_uuid(),
+  items jsonb not null default '[]'::jsonb,
+  total integer not null default 0,
+  status text not null default 'pending',
+  reserved_until timestamptz,
+  buyer_name text default '',
+  buyer_username text default '',
+  buyer_telegram_id text default '',
+  created_at timestamptz default now()
+);
+
+alter table orders add column if not exists items jsonb not null default '[]'::jsonb;
+alter table orders add column if not exists total integer not null default 0;
+alter table orders add column if not exists status text not null default 'pending';
+alter table orders add column if not exists reserved_until timestamptz;
+alter table orders add column if not exists buyer_name text default '';
+alter table orders add column if not exists buyer_username text default '';
+alter table orders add column if not exists buyer_telegram_id text default '';
+
+alter table orders enable row level security;
+
+drop policy if exists "Public read orders" on orders;
+drop policy if exists "Public insert orders" on orders;
+drop policy if exists "Public update orders" on orders;
+drop policy if exists "Public delete orders" on orders;
+
+create policy "Public read orders" on orders for select to anon using (true);
+create policy "Public insert orders" on orders for insert to anon with check (true);
+create policy "Public update orders" on orders for update to anon using (true) with check (true);
+create policy "Public delete orders" on orders for delete to anon using (true);
