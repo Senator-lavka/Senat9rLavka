@@ -34,3 +34,24 @@ create policy "Public read product images" on storage.objects for select to anon
 create policy "Public upload product images" on storage.objects for insert to anon with check (bucket_id = 'product-images');
 create policy "Public update product images" on storage.objects for update to anon using (bucket_id = 'product-images') with check (bucket_id = 'product-images');
 create policy "Public delete product images" on storage.objects for delete to anon using (bucket_id = 'product-images');
+
+create table if not exists product_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  comment text default '',
+  contact text default '',
+  is_new boolean not null default true,
+  created_at timestamptz default now()
+);
+
+alter table product_suggestions enable row level security;
+
+drop policy if exists "Public read product suggestions" on product_suggestions;
+drop policy if exists "Public insert product suggestions" on product_suggestions;
+drop policy if exists "Public update product suggestions" on product_suggestions;
+drop policy if exists "Public delete product suggestions" on product_suggestions;
+
+create policy "Public read product suggestions" on product_suggestions for select to anon using (true);
+create policy "Public insert product suggestions" on product_suggestions for insert to anon with check (true);
+create policy "Public update product suggestions" on product_suggestions for update to anon using (true) with check (true);
+create policy "Public delete product suggestions" on product_suggestions for delete to anon using (true);
