@@ -148,8 +148,8 @@ function App() {
 
       {page === 'shop' ? (
         <>
-          <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
           <SuggestionWidget onSubmit={submitSuggestion} />
+          <Shop products={products} loading={loading} cart={cart} addToCart={addToCart} changeQty={changeQty} cartItems={cartItems} total={total} order={order} />
         </>
       ) : (
         <Admin products={products} reload={loadProducts} suggestions={suggestions} reloadSuggestions={loadSuggestions} newSuggestionsCount={newSuggestionsCount} />
