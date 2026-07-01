@@ -109,7 +109,7 @@ function App() {
         <div>
           <p className="kicker">Telegram Mini App</p>
           <h1>Лавка Сенатора</h1>
-          <p>Ничего не спизжено.</p>
+          <p>Самые дешевые цены в галактике!</p>
         </div>
         <button className="admin-link" onClick={() => setPage(page === 'shop' ? 'admin' : 'shop')}>
           {page === 'shop' ? 'Админка' : 'Магазин'}
@@ -195,6 +195,7 @@ function Admin({ products, reload }) {
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({ name: '', description: '', price: '', stock: '' })
   const [editFiles, setEditFiles] = useState([])
+  const [editImageUrls, setEditImageUrls] = useState([])
   const editingProduct = products.find(p => p.id === editingId)
 
   function login(e) {
@@ -250,6 +251,7 @@ function Admin({ products, reload }) {
       stock: String(product.stock || '')
     })
     setEditFiles([])
+    setEditImageUrls(product.image_urls || [])
   }
 
   async function saveEdit(e) {
@@ -258,7 +260,7 @@ function Admin({ products, reload }) {
     setBusy(true)
     try {
       const newUrls = await uploadImages(editFiles)
-      const image_urls = [...(editingProduct.image_urls || []), ...newUrls]
+      const image_urls = [...editImageUrls, ...newUrls]
       const { error } = await supabase.from('products').update({
         name: editForm.name,
         description: editForm.description,
@@ -269,11 +271,16 @@ function Admin({ products, reload }) {
       if (error) throw error
       setEditingId(null)
       setEditFiles([])
+      setEditImageUrls([])
       await reload()
       alert('Товар изменён')
     } catch (err) {
       alert('Ошибка: ' + err.message)
     } finally { setBusy(false) }
+  }
+
+  function removeEditPhoto(index) {
+    setEditImageUrls(prev => prev.filter((_, i) => i !== index))
   }
 
   async function removeProduct(id) {
@@ -331,7 +338,7 @@ function Admin({ products, reload }) {
         <input required type="number" placeholder="Остаток" value={editForm.stock} onChange={e => setEditForm({ ...editForm, stock: e.target.value })} />
         <label className="field-label">Добавить новые фото</label>
         <input type="file" multiple accept="image/*" onChange={e => setEditFiles([...e.target.files])} />
-        {!!editingProduct.image_urls?.length && <div className="thumbs">{editingProduct.image_urls.map((url, index) => <img key={url + index} src={url} alt="Фото товара" />)}</div>}
+        {!!editImageUrls?.length && <div className="thumbs">{editImageUrls.map((url, index) => <div className="thumb" key={url + index}><img src={url} alt="Фото товара" /><button type="button" onClick={() => removeEditPhoto(index)}>×</button></div>)}</div>}
         <button className="primary" disabled={busy}>{busy ? 'Сохраняю...' : 'Сохранить изменения'}</button>
         <button type="button" className="secondary" onClick={() => setEditingId(null)}>Отмена</button>
       </form>}
