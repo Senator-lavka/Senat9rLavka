@@ -26,12 +26,25 @@ function availableQty(product) {
 }
 
 function getBuyerInfo() {
-  const user = window.Telegram?.WebApp?.initDataUnsafe?.user
-  if (!user) return { name: 'Покупатель из Telegram', username: '', telegram_id: '' }
+  const webApp = window.Telegram?.WebApp
+  webApp?.ready?.()
+  const user = webApp?.initDataUnsafe?.user
+
+  if (!user) {
+    return {
+      name: 'Покупатель из Telegram',
+      username: '',
+      telegram_id: ''
+    }
+  }
+
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ')
+  const username = user.username ? '@' + user.username : ''
+  const displayName = username || fullName || `Telegram ID ${user.id}`
+
   return {
-    name: fullName || user.username || 'Покупатель из Telegram',
-    username: user.username ? '@' + user.username : '',
+    name: displayName,
+    username,
     telegram_id: user.id ? String(user.id) : ''
   }
 }
