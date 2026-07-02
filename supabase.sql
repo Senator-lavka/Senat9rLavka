@@ -87,3 +87,34 @@ create policy "Public read orders" on orders for select to anon using (true);
 create policy "Public insert orders" on orders for insert to anon with check (true);
 create policy "Public update orders" on orders for update to anon using (true) with check (true);
 create policy "Public delete orders" on orders for delete to anon using (true);
+
+create table if not exists product_waits (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid references products(id) on delete cascade,
+  product_name text not null default '',
+  buyer_name text default '',
+  buyer_username text default '',
+  buyer_telegram_id text default '',
+  is_new boolean not null default true,
+  created_at timestamptz default now()
+);
+
+alter table product_waits add column if not exists product_id uuid references products(id) on delete cascade;
+alter table product_waits add column if not exists product_name text not null default '';
+alter table product_waits add column if not exists buyer_name text default '';
+alter table product_waits add column if not exists buyer_username text default '';
+alter table product_waits add column if not exists buyer_telegram_id text default '';
+alter table product_waits add column if not exists is_new boolean not null default true;
+alter table product_waits add column if not exists created_at timestamptz default now();
+
+alter table product_waits enable row level security;
+
+drop policy if exists "Public read product waits" on product_waits;
+drop policy if exists "Public insert product waits" on product_waits;
+drop policy if exists "Public update product waits" on product_waits;
+drop policy if exists "Public delete product waits" on product_waits;
+
+create policy "Public read product waits" on product_waits for select to anon using (true);
+create policy "Public insert product waits" on product_waits for insert to anon with check (true);
+create policy "Public update product waits" on product_waits for update to anon using (true) with check (true);
+create policy "Public delete product waits" on product_waits for delete to anon using (true);
