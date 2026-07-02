@@ -234,7 +234,7 @@ function App() {
         if (error) throw error
       }
 
-      const { error: orderError } = await supabase.from('orders').insert({
+      const { data: createdOrder, error: orderError } = await supabase.from('orders').insert({
         items: orderItems,
         total,
         status: 'pending',
@@ -242,15 +242,30 @@ function App() {
         buyer_name: buyer.name,
         buyer_username: buyer.username,
         buyer_telegram_id: buyer.telegram_id
-      })
+      }).select('*').single()
       if (orderError) throw orderError
 
       const list = cartItems.map(item => `• ${item.name} — ${item.qty} шт. × ${item.price} ₽ = ${item.qty * item.price} ₽`).join('\n')
-      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽\n\nТовар забронирован на ${RESERVE_MINUTES} минут.`
+      const text = `Достопочтенный Сенатор!\n\nХочу оформить заказ.\n\n${list}\n\nИтоговая стоимость: ${total} ₽\n\nЗаказ ожидает подтверждения Сенатора. Бронь действует ${RESERVE_MINUTES} минут.`
+
+      fetch('/api/send-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_id: createdOrder?.id,
+          buyer,
+          items: orderItems,
+          total,
+          reserved_until: reservedUntil,
+          owner_username: OWNER_USERNAME,
+          message_text: text
+        })
+      }).catch(console.error)
+
       setCart({})
       await refreshAll()
-      alert(`Заказ создан. Бронь действует ${RESERVE_MINUTES} минут. Теперь отправь сообщение продавцу.`)
-      window.open(`https://t.me/${OWNER_USERNAME}?text=${encodeURIComponent(text)}`, '_blank')
+      alert(`Заказ ожидает подтверждения Сенатора. Бронь действует ${RESERVE_MINUTES} минут. Бот отправит сообщение, но на всякий случай напиши @${OWNER_USERNAME} в личные сообщения.`)
+      window.Telegram?.WebApp?.openTelegramLink?.(`https://t.me/${OWNER_USERNAME}`)
     } catch (err) {
       alert('Ошибка брони: ' + err.message)
       await refreshAll()
@@ -662,6 +677,18 @@ function Admin({ products, reload, suggestions, reloadSuggestions, newSuggestion
     if (status === 'cancelled') {
       await releaseOrderReserve(order)
     }
+
+    fetch('/api/send-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        order_id: order.id,
+        buyer_telegram_id: order.buyer_telegram_id,
+        status,
+        total: order.total,
+        items: order.items || []
+      })
+    }).catch(console.error)
 
     await reloadOrders()
   }
