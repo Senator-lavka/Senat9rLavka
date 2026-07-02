@@ -17,3 +17,45 @@ Telegram Mini App магазин на React + Vite + Supabase.
 2. Удалить `package-lock.json`, если он снова появился.
 3. В Supabase выполнить `supabase.sql` через SQL Editor.
 4. В Vercel сделать Redeploy без Build Cache.
+
+## Telegram-бот: уведомления и /start
+
+В проект добавлена папка `api/`:
+
+- `api/bot.js` — webhook для `/start` и сообщений боту.
+- `api/send-order.js` — отправляет уведомление покупателю и админу после заказа.
+- `api/send-status.js` — отправляет покупателю статус заказа после подтверждения/отмены/выдачи.
+
+### Переменные Vercel
+
+В Vercel → Settings → Environment Variables добавь:
+
+```env
+BOT_TOKEN=токен_бота_из_BotFather
+ADMIN_TELEGRAM_ID=твой_числовой_Telegram_ID
+MINI_APP_URL=https://твой-домен.vercel.app
+```
+
+`ADMIN_TELEGRAM_ID` — это именно числовой ID твоего аккаунта, не `@username`. Уведомления о новых заказах будут приходить только на этот ID, не всем пользователям бота.
+
+Узнать свой ID можно через бота `@userinfobot` или `@getmyid_bot`.
+
+### Webhook
+
+После успешного деплоя открой в браузере ссылку:
+
+```text
+https://api.telegram.org/botBOT_TOKEN/setWebhook?url=https://твой-домен.vercel.app/api/bot
+```
+
+Заменив `BOT_TOKEN` и домен на свои. Должен прийти ответ:
+
+```json
+{"ok":true,"result":true,"description":"Webhook was set"}
+```
+
+После этого `/start` в боте начнёт отвечать сообщением с кнопкой лавки.
+
+### Важно
+
+Бот может написать покупателю только если покупатель уже открывал бота и нажимал `/start` или заходил в Mini App через этого бота.
